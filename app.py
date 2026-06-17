@@ -19,7 +19,7 @@ from retrieval.d3fend_lookup import D3FENDLookup
 
 st.set_page_config(
     page_title="ThreatOracle AI",
-    page_icon="🔍",
+    page_icon="⚔️",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -109,7 +109,7 @@ def load_d3fend():
 
 # --- Header ---
 
-st.markdown('<div class="main-header">🔍 ThreatOracle AI</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">⚔️ThreatOracle AI</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Paste suspicious behaviour. Get ATT&CK diagnosis + D3FEND remediation in 15 seconds.</div>', unsafe_allow_html=True)
 
 st.divider()
