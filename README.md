@@ -1,4 +1,4 @@
-# ThreatOracle AI 🔍
+# ThreatOracle AI ⚔️
 
 > Paste suspicious behaviour. Get a complete ATT&CK diagnosis + D3FEND remediation in 15 seconds.
 
