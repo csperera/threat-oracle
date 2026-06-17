@@ -139,16 +139,19 @@ Loose coupling is a core design principle. ThreatOracle accepts input from any u
 
 ## Status
 
-🚧 In active development
+✅ V1 Complete — fully operational local demo
 
 - [x] Scaffolding and architecture
-- [ ] ATT&CK ingestion + ChromaDB embedding
-- [ ] D3FEND lookup table
-- [ ] Normalization agent
-- [ ] Hybrid retrieval (dense + sparse + RRF)
-- [ ] Synthesis agent
-- [ ] Streamlit frontend
-- [ ] Demo scenarios preloaded
+- [x] ATT&CK ingestion + ChromaDB embedding (697 techniques)
+- [x] D3FEND lookup table (423 technique mappings)
+- [x] Normalization agent (raw logs / plain English / AegisAI JSON)
+- [x] Hybrid retrieval (dense + sparse + RRF fusion)
+- [x] Synthesis agent (full analyst report with ATT&CK citations)
+- [x] Streamlit frontend with 3 demo scenarios preloaded
+- [ ] MITRE ATLAS ingestion (ML-specific attacks) — V2
+- [ ] ATT&CK Navigator heat map visualization — V2
+- [ ] AegisAI direct API integration — V2
+- [ ] Threat actor profiling — V2
 
 ## Target Vertical
 
