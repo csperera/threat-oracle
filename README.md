@@ -46,23 +46,27 @@ ANALYST REPORT
 
 All sources are open, Apache 2.0 licensed, and maintained by MITRE:
 
-| Source | Contents | Size |
-|---|---|---|
-| [MITRE ATT&CK v16](https://github.com/mitre/cti) | Tactics, techniques, sub-techniques, threat actor profiles, mitigations | 600+ techniques |
-| [MITRE D3FEND](https://d3fend.mitre.org) | Defensive countermeasures mapped to ATT&CK techniques | 100+ countermeasures |
-| [MITRE ATLAS](https://github.com/mitre-atlas/atlas-data) | ML-specific attacks: adversarial ML, model poisoning, prompt injection | V2 |
+
+| Source                                                   | Contents                                                                | Size                 |
+| -------------------------------------------------------- | ----------------------------------------------------------------------- | -------------------- |
+| [MITRE ATT&CK v16](https://github.com/mitre/cti)         | Tactics, techniques, sub-techniques, threat actor profiles, mitigations | 600+ techniques      |
+| [MITRE D3FEND](https://d3fend.mitre.org)                 | Defensive countermeasures mapped to ATT&CK techniques                   | 100+ countermeasures |
+| [MITRE ATLAS](https://github.com/mitre-atlas/atlas-data) | ML-specific attacks: adversarial ML, model poisoning, prompt injection  | V2                   |
+
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Frontend | Streamlit |
-| Backend | FastAPI |
-| LLM | Claude claude-sonnet-4-6 (Anthropic API) |
-| Embeddings | OpenAI text-embedding-3-small |
-| Vector DB | ChromaDB (local persistent) |
-| Retrieval | Hybrid dense + BM25 sparse + RRF fusion |
-| Validation | Pydantic |
+
+| Layer      | Technology                               |
+| ---------- | ---------------------------------------- |
+| Frontend   | Streamlit                                |
+| Backend    | FastAPI                                  |
+| LLM        | Claude claude-sonnet-4-6 (Anthropic API) |
+| Embeddings | OpenAI text-embedding-3-small            |
+| Vector DB  | ChromaDB (local persistent)              |
+| Retrieval  | Hybrid dense + BM25 sparse + RRF fusion  |
+| Validation | Pydantic                                 |
+
 
 ## Setup
 
@@ -120,6 +124,7 @@ Isolate 192.168.1.45 and 192.168.1.103
 Block outbound to 185.220.101.x
 Enable account lockout policy immediately
 Preserve logs for forensic analysis
+
 ## Component Context
 
 ThreatOracle is the **Intelligence Layer** of a loosely coupled AI-powered SOC pipeline:
