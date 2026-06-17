@@ -20,6 +20,7 @@ ThreatOracle accepts any suspicious behaviour input — raw log snippets, plain 
 ## Architecture
 
 Two-stage pipeline:
+```
 INPUT (any format)
 │
 ▼
@@ -36,7 +37,9 @@ Structured Security JSON
 │
 └──► Synthesis Agent (LLM)
 │
-▼
+▼ 
+OUTPUT (Analyst Report)
+```
 ANALYST REPORT
 **Stage 1 — Normalization Agent:** Accepts arbitrary input format. Extracts structured security-relevant features regardless of source. Outputs standardized JSON. This handles the diversity of real-world log formats.
 
