@@ -158,3 +158,5 @@ Loose coupling is a core design principle. ThreatOracle accepts input from any u
 ## Target Vertical
 
 Financial services. A compromised trading AI, deposit system, or fraud detection model represents systemic risk orders of magnitude beyond a compromised laptop. ThreatOracle is designed with financial services as the primary use case, with MITRE ATLAS (ML-specific attacks) in V2 to cover the AI/ML attack surface that classic ATT&CK doesn't address.
+
+© 2026 Christian Perera. All Rights Reserved. Proprietary and confidential.
