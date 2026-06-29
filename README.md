@@ -6,7 +6,7 @@
 
 The MITRE ATT&CK framework contains 600+ techniques across 14 tactics. MITRE D3FEND maps hundreds of defensive countermeasures to those techniques. No analyst has all of that memorized. Manual ATT&CK/D3FEND cross-referencing takes an expert 15–45 minutes per incident. A typical enterprise SOC handles 1,000–10,000 alerts per day. The math is impossible.
 
-ThreatOracle makes ATT&CK/D3FEND expertise democratically available to every analyst regardless of experience level — a junior analyst gets the same quality diagnosis as a 10-year veteran.
+ThreatOracle makes ATT&CK/D3FEND expertise democratically available to every analyst regardless of experience level - a junior analyst gets the same quality diagnosis as a 10-year veteran.
 
 ## The Solution
 
