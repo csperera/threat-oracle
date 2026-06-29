@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ThreatOracle AI — Architecture</title>
+<style>
+  body { font-family: sans-serif; background: #f5f5f5; margin: 0; padding: 20px; }
+  svg { max-width: 900px; display: block; margin: 0 auto; background: white; border-radius: 12px; padding: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+  .node { cursor: pointer; }
+  .node:hover rect { opacity: 0.85; }
+  #modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:100; }
+  #modal-box { background:white; max-width:580px; margin:60px auto; border-radius:10px; padding:28px 32px; position:relative; max-height:80vh; overflow-y:auto; }
+  #modal-title { font-size:15px; font-weight:600; color:#1a1a2e; margin-bottom:12px; }
+  #modal-body { font-size:13px; color:#333; line-height:1.7; white-space:pre-wrap; }
+  #modal-close { position:absolute; top:12px; right:16px; font-size:20px; cursor:pointer; color:#666; }
+</style>
+</head>
+<body>
+
+<div id="modal-overlay" onclick="closeModal()">
+  <div id="modal-box" onclick="event.stopPropagation()">
+    <span id="modal-close" onclick="closeModal()">✕</span>
+    <div id="modal-title"></div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+var info = {
+  ingestion: {
+    title: "Knowledge Base Ingestion (one-time setup)",
+    body: `IN: Three MITRE open-source knowledge bases — all Apache 2.0 licensed
+OUT: ChromaDB vector index + D3FEND JSON lookup table + ATLAS corpus (V2)
+
+SOURCE 1 — MITRE ATT&CK (ingestion/attck_ingestion.py):
+Downloads enterprise-attack STIX bundle from github.com/mitre/cti (~12MB)
+Parses 600+ active techniques — skips deprecated and revoked entries
+Chunks one technique per document:
+  technique ID, name, tactic, description (1500 chars), detection (800 chars)
+  platforms, is_subtechnique flag, parent_id, source URL
+Embeds via Google Gemini (models/gemini-embedding-001)
+  task_type="retrieval_document" · batches of 50 · 65-second rate limit pause
+Stores in ChromaDB PersistentClient at data/chroma_db/
+  collection: attck_techniques · cosine similarity · technique IDs as document IDs
+Full technique metadata saved as flat JSON at data/attck/technique_lookup.json
+
+SOURCE 2 — MITRE D3FEND (ingestion/d3fend_parser.py):
+Queries live D3FEND API per ATT&CK technique ID:
+  https://d3fend.mitre.org/api/offensive-technique/attack/{id}.json
+Extracts countermeasure name and D3FEND ID from API bindings
+Infers category from name keywords: Prevent, Detect, Respond, Other
+Sorts by priority: Prevent → Detect → Respond → Other
+Saves as flat JSON lookup at data/d3fend/d3fend_lookup.json keyed by technique ID
+Progress saved every 25 techniques — resilient to API interruptions
+NOT embedded — pure key lookup at query time
+0.3 second polite delay between API calls
+
+SOURCE 3 — MITRE ATLAS (V2 planned):
+github.com/mitre-atlas/atlas-data · ML-specific attack techniques
+Adversarial ML · prompt injection · model poisoning · training data corruption
+
+Key design decision — ATT&CK embedded, D3FEND as lookup:
+ATT&CK is a semantic search problem — technique descriptions need vector search
+D3FEND is a graph relationship problem — technique ID maps to countermeasures
+Two different data structures for two fundamentally different retrieval patterns`
+  },
+  input: {
+    title: "Input Layer — Three Accepted Formats",
+    body: `IN: Any of three input formats — all accepted interchangeably
+OUT: Raw input string passed to Normalization Agent
+
+FORMAT 1 — Raw log snippets:
+Network traffic logs, authentication logs, system event logs
+Example:
+"02:14:33 - Host 192.168.1.45 attempting SSH connections to 47 internal hosts
+ in 3 minutes. Multiple failed authentication attempts observed."
+
+FORMAT 2 — Plain English description:
+Analyst describing suspicious behaviour in natural language
+Example:
+"We are seeing unusual outbound traffic to a known Tor exit node with 2.3GB
+ of data transferred in under 3 minutes from host 192.168.1.103."
+
+FORMAT 3 — Structured JSON from AegisAI or SIEM:
+{
+  "attack_type": "BruteForce",
+  "confidence": 0.97,
+  "src_ip": "192.168.1.45",
+  "dst_port": 22,
+  "timestamp": "2026-06-27T02:14:33Z"
+}
+
+ThreatOracle is Component 2 of the AI SOC pipeline.
+It accepts AegisAI JSON output directly — the two systems are loosely coupled
+via the ThreatEvent JSON schema. Neither system depends on the other's internals.
+
+UI entry points:
+Streamlit frontend: demo scenario dropdown + log paste text area + Analyze button
+FastAPI backend: POST /analyze accepts raw_input + input_format`
+  },
+  stage1: {
+    title: "Stage 1 — Normalization Agent (LLM)",
+    body: `agents/normalization_agent.py
+
+IN: Raw input string — any of the three formats
+OUT: Standardized security JSON regardless of input format
+
+How it works:
+LLM call with structured system prompt containing:
+  Role: "You are a cybersecurity analyst extracting structured security features
+  from arbitrary input"
+  Explicit examples of each input format and expected JSON output
+  JSON-only instruction — no explanation, no markdown, raw JSON only
+
+LLM extracts security-relevant features regardless of input format:
+  source IP addresses · destination IPs and ports · protocol
+  behaviour patterns · timing information · data volume
+  attack indicators · affected hosts
+
+Pydantic validation on output:
+  Optional fields throughout — partial extraction always better than failure
+  If a field is not in the input → leave it null, do not hallucinate
+
+Example output (from SSH brute force log):
+{
+  "behaviours": [
+    {
+      "description": "Rapid SSH connections to 47 internal hosts",
+      "source_ip": "192.168.1.45",
+      "protocol": "SSH",
+      "pattern": "scanning",
+      "volume": "47 hosts in 3 minutes"
+    }
+  ],
+  "external_connections": ["185.220.101.x"],
+  "data_transfer": "2.3GB outbound",
+  "affected_hosts": ["192.168.1.45", "192.168.1.103"]
+}
+
+Key design decision:
+The normalization stage is the secret sauce — it handles the diversity of
+real-world log formats without requiring users to pre-format their input.
+An analyst can paste raw Splunk output, a plain English description, or
+AegisAI JSON and get the same quality of diagnosis.`
+  },
+  stage2: {
+    title: "Stage 2 — Hybrid RAG Retrieval + D3FEND Lookup",
+    body: `retrieval/hybrid_search.py + retrieval/d3fend_lookup.py
+
+IN: Standardized security JSON from Normalization Agent
+OUT: Top ATT&CK technique matches with confidence scores + D3FEND countermeasures
+
+STEP 2a — HYBRID SEARCH (retrieval/hybrid_search.py):
+Each behaviour in the normalized JSON becomes a separate query.
+
+Dense search:
+  Embed behaviour description using Gemini models/gemini-embedding-001
+  ChromaDB cosine similarity search across 600+ ATT&CK technique embeddings
+  Returns ranked list A — semantically similar techniques
+
+Sparse search:
+  BM25 keyword matching on technique names and descriptions
+  Returns ranked list B — keyword-matched techniques
+
+RRF Fusion:
+  Merge ranked lists A and B by position, not score
+  Position-based merging prevents either method from dominating
+  A technique ranked #2 in both lists beats one ranked #1 in only one list
+
+Confidence threshold filter:
+  Only techniques with confidence >= 0.70 surface in results
+  Below threshold = not confident enough to report to analyst
+
+Why hybrid and not pure vector search:
+  "SSH brute force" needs both semantic understanding AND keyword match
+  Pure vector search misses exact names like "T1110" or "Password Spraying"
+  Pure BM25 misses semantic variants — "credential stuffing" vs "password attack"
+  Hybrid with RRF gets both signals simultaneously
+
+STEP 2b — D3FEND LOOKUP (retrieval/d3fend_lookup.py):
+Takes top ATT&CK technique IDs from hybrid search
+Direct key lookup in data/d3fend/d3fend_lookup.json — NOT semantic search
+Returns all countermeasures mapped to each technique
+Pre-sorted: Prevent → Detect → Respond → Other
+Each countermeasure: D3FEND ID · name · category · URL`
+  },
+  stage3: {
+    title: "Stage 3 — Synthesis Agent (LLM)",
+    body: `agents/synthesis_agent.py
+
+IN: All retrieval results — ranked techniques + evidence + D3FEND countermeasures
+OUT: Complete structured analyst report — six sections
+
+How it works:
+LLM call (Claude Sonnet) with all retrieval results injected as context.
+
+Grounding constraints enforced in system prompt:
+  Every claim must be traceable to retrieved ATT&CK or D3FEND content
+  Always cite technique IDs (e.g. T1110, T1021.004)
+  No hallucination — if not in retrieved context, do not state it
+
+Report structure — six sections:
+
+1. EXECUTIVE SUMMARY (boardroom ready, 2-3 sentences):
+   "Our systems have detected a successful brute force attack against internal
+    SSH services, leading to the compromise of host 192.168.1.103..."
+
+2. DETECTED TECHNIQUES (ranked by confidence):
+   T1110.003 — Password Spraying (91%) · Tactic: Credential Access
+   Evidence: Multiple failed SSH authentication attempts observed
+
+3. D3FEND COUNTERMEASURES per technique (Prevent → Detect → Respond):
+   D3-ALO Account Lockout [Prevent]
+   D3-MFA Multi-Factor Authentication [Prevent]
+   D3-SPP Strong Password Policy [Prevent]
+
+4. NETWORK INDICATORS:
+   Source IPs · Internal targets · External/C2 connections · Timeline · Volume
+
+5. RECOMMENDED IMMEDIATE ACTIONS (specific, with D3FEND codes):
+   "1. Isolate host 192.168.1.103 from network immediately"
+   "2. Block outbound to 185.220.101.x (D3-NTF Network Traffic Filter)"
+
+6. ATTACK CHAIN ASSESSMENT (narrative connecting all techniques):
+   "The attack began with SSH brute force (T1110), achieving lateral movement
+    via SSH (T1021.004), followed by C2 via Tor (T1090.003) and exfiltration"
+
+Why Claude Sonnet for synthesis:
+Compliance-grade language precision required
+Structured six-section output enforced via prompt schema
+ATT&CK technique ID citation is non-negotiable — cannot be skipped`
+  },
+  output: {
+    title: "Output Layer — Three-Tab Report",
+    body: `IN: Complete analyst report from Synthesis Agent
+OUT: Three-tab display in Streamlit + green confirmation bar
+
+TAB 1 — ANALYST REPORT:
+Full formatted diagnosis — all six sections rendered in Streamlit markdown
+Copyable — paste directly into incident report or ticketing system
+Executive summary at top — boardroom ready without further editing
+The deliverable that replaces 45 minutes of manual MITRE navigation
+
+TAB 2 — TECHNIQUES:
+All detected techniques ranked by confidence score
+Full ATT&CK detail per technique:
+  Tactic, description, detection guidance, evidence from the input
+D3FEND countermeasures per technique:
+  Prevent, Detect, and Respond countermeasures clearly categorized
+  Each countermeasure linked to D3FEND ID for reference
+
+TAB 3 — NORMALIZED JSON:
+Shows exactly what the Normalization Agent extracted from the raw input
+Transparency into the normalization step — analyst verifies extraction accuracy
+Useful for debugging when a technique seems unexpected
+Shows the exact queries that drove the retrieval in Stage 2
+
+GREEN CONFIRMATION BAR:
+Displays below Analyze button on pipeline completion
+"Done — N techniques identified"
+End-to-end time target: under 30 seconds
+Manual equivalent: 45 minutes of ATT&CK + D3FEND cross-referencing
+
+The confirmation bar is the signal that the pipeline ran clean.
+N techniques identified = the system found meaningful signal in the input.`
+  }
+};
+
+function showInfo(key) {
+  document.getElementById("modal-title").textContent = info[key].title;
+  document.getElementById("modal-body").textContent = info[key].body;
+  document.getElementById("modal-overlay").style.display = "block";
+}
+
+function closeModal() {
+  document.getElementById("modal-overlay").style.display = "none";
+}
+</script>
+
+<svg viewBox="0 0 680 1200" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>ThreatOracle AI — 4-Stage RAG Diagnostic Pipeline</title>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<!-- Header -->
+<rect x="40" y="14" width="600" height="52" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text font-size="14" font-weight="500" fill="#3C3489" x="340" y="36" text-anchor="middle" dominant-baseline="central">ThreatOracle AI — 4-Stage RAG Diagnostic Pipeline</text>
+<text font-size="12" fill="#534AB7" x="340" y="54" text-anchor="middle" dominant-baseline="central">Component 2 of AI SOC Pipeline · Any Input → ATT&amp;CK/D3FEND Diagnosis · &lt;30 seconds</text>
+
+<!-- KNOWLEDGE BASE INGESTION -->
+<text font-size="12" fill="#555" x="40" y="88" dominant-baseline="central">Knowledge Base Ingestion (one-time setup)</text>
+<g class="node" onclick="showInfo('ingestion')">
+<rect x="40" y="100" width="600" height="86" rx="6" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text font-size="13" font-weight="500" fill="#2C2C2A" x="340" y="122" text-anchor="middle" dominant-baseline="central">Three MITRE knowledge bases ingested before any query is processed</text>
+<text font-size="11" fill="#5F5E5A" x="340" y="140" text-anchor="middle" dominant-baseline="central">ATT&amp;CK STIX JSON → chunk (1 per technique) → Gemini embed → ChromaDB vector index</text>
+<text font-size="11" fill="#5F5E5A" x="340" y="155" text-anchor="middle" dominant-baseline="central">D3FEND live API → JSON lookup table keyed by technique ID · NOT embedded</text>
+<text font-size="11" fill="#5F5E5A" x="340" y="170" text-anchor="middle" dominant-baseline="central">ATT&amp;CK = semantic search problem · D3FEND = graph lookup problem · different patterns</text>
+</g>
+
+<line x1="340" y1="186" x2="340" y2="208" stroke="#666" stroke-width="1" marker-end="url(#arrow)"/>
+
+<!-- INPUT LAYER -->
+<text font-size="12" fill="#555" x="40" y="220" dominant-baseline="central">Input Layer — three formats accepted interchangeably</text>
+<g class="node" onclick="showInfo('input')">
+<rect x="40" y="232" width="183" height="76" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text font-size="12" font-weight="500" fill="#085041" x="131" y="254" text-anchor="middle" dominant-baseline="central">Raw Log Snippets</text>
+<text font-size="11" fill="#0F6E56" x="131" y="272" text-anchor="middle" dominant-baseline="central">Network · auth</text>
+<text font-size="11" fill="#0F6E56" x="131" y="287" text-anchor="middle" dominant-baseline="central">system event logs</text>
+</g>
+
+<g class="node" onclick="showInfo('input')">
+<rect x="233" y="232" width="183" height="76" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text font-size="12" font-weight="500" fill="#085041" x="324" y="254" text-anchor="middle" dominant-baseline="central">Plain English</text>
+<text font-size="11" fill="#0F6E56" x="324" y="272" text-anchor="middle" dominant-baseline="central">Analyst describing</text>
+<text font-size="11" fill="#0F6E56" x="324" y="287" text-anchor="middle" dominant-baseline="central">suspicious behaviour</text>
+</g>
+
+<g class="node" onclick="showInfo('input')">
+<rect x="426" y="232" width="214" height="76" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text font-size="12" font-weight="500" fill="#085041" x="533" y="254" text-anchor="middle" dominant-baseline="central">Structured JSON</text>
+<text font-size="11" fill="#0F6E56" x="533" y="272" text-anchor="middle" dominant-baseline="central">AegisAI · Splunk</text>
+<text font-size="11" fill="#0F6E56" x="533" y="287" text-anchor="middle" dominant-baseline="central">Sentinel · Chronicle</text>
+</g>
+
+<line x1="340" y1="308" x2="340" y2="330" stroke="#666" stroke-width="1" marker-end="url(#arrow)"/>
+<text font-size="10" fill="#888" x="348" y="322">raw input string</text>
+
+<!-- STAGE 1 -->
+<text font-size="12" fill="#555" x="40" y="342" dominant-baseline="central">Stage 1 — Normalization Agent (LLM)</text>
+<g class="node" onclick="showInfo('stage1')">
+<rect x="40" y="354" width="600" height="76" rx="6" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text font-size="14" font-weight="500" fill="#3C3489" x="340" y="376" text-anchor="middle" dominant-baseline="central">LLM extracts structured security JSON from any input format</text>
+<text font-size="12" fill="#534AB7" x="340" y="394" text-anchor="middle" dominant-baseline="central">source IPs · destination IPs/ports · protocol · behaviour patterns · timing · volume</text>
+<text font-size="12" fill="#534AB7" x="340" y="409" text-anchor="middle" dominant-baseline="central">Pydantic validation · Optional fields · partial extraction always better than failure</text>
+<text font-size="12" fill="#534AB7" x="340" y="424" text-anchor="middle" dominant-baseline="central">Secret sauce — handles real-world log diversity without pre-formatting requirement</text>
+</g>
+
+<line x1="340" y1="430" x2="340" y2="452" stroke="#666" stroke-width="1" marker-end="url(#arrow)"/>
+<text font-size="10" fill="#888" x="348" y="444">standardized security JSON</text>
+
+<!-- STAGE 2 -->
+<text font-size="12" fill="#555" x="40" y="464" dominant-baseline="central">Stage 2 — Hybrid RAG Retrieval + D3FEND Lookup</text>
+<g class="node" onclick="showInfo('stage2')">
+<rect x="40" y="476" width="600" height="96" rx="6" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text font-size="14" font-weight="500" fill="#3C3489" x="340" y="498" text-anchor="middle" dominant-baseline="central">Dense (ChromaDB) + Sparse (BM25) → RRF Fusion → confidence ≥ 0.70</text>
+<text font-size="12" fill="#534AB7" x="340" y="516" text-anchor="middle" dominant-baseline="central">Each behaviour → separate query · position-based merging prevents one method dominating</text>
+<text font-size="12" fill="#534AB7" x="340" y="531" text-anchor="middle" dominant-baseline="central">Pure vector misses "T1110" · pure BM25 misses "credential stuffing" · hybrid gets both</text>
+<text font-size="12" fill="#534AB7" x="340" y="546" text-anchor="middle" dominant-baseline="central">D3FEND: direct key lookup by technique ID · Prevent → Detect → Respond priority order</text>
+<text font-size="12" fill="#534AB7" x="340" y="561" text-anchor="middle" dominant-baseline="central">NOT semantic search — graph relationship: technique ID → countermeasures</text>
+</g>
+
+<line x1="340" y1="572" x2="340" y2="594" stroke="#666" stroke-width="1" marker-end="url(#arrow)"/>
+<text font-size="10" fill="#888" x="348" y="586">techniques + confidence + D3FEND countermeasures</text>
+
+<!-- STAGE 3 -->
+<text font-size="12" fill="#555" x="40" y="606" dominant-baseline="central">Stage 3 — Synthesis Agent (Claude Sonnet)</text>
+<g class="node" onclick="showInfo('stage3')">
+<rect x="40" y="618" width="600" height="96" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text font-size="14" font-weight="500" fill="#0C447C" x="340" y="640" text-anchor="middle" dominant-baseline="central">Six-section analyst report — grounded, cited, boardroom ready</text>
+<text font-size="12" fill="#185FA5" x="340" y="658" text-anchor="middle" dominant-baseline="central">1. Executive Summary · 2. Detected Techniques (ranked) · 3. D3FEND Countermeasures</text>
+<text font-size="12" fill="#185FA5" x="340" y="673" text-anchor="middle" dominant-baseline="central">4. Network Indicators · 5. Immediate Actions + D3FEND codes · 6. Attack Chain Assessment</text>
+<text font-size="12" fill="#185FA5" x="340" y="688" text-anchor="middle" dominant-baseline="central">Every claim traceable to ATT&amp;CK or D3FEND · always cite technique IDs · no hallucination</text>
+<text font-size="12" fill="#185FA5" x="340" y="703" text-anchor="middle" dominant-baseline="central">Claude Sonnet — compliance-grade language precision required</text>
+</g>
+
+<line x1="340" y1="714" x2="340" y2="736" stroke="#666" stroke-width="1" marker-end="url(#arrow)"/>
+<text font-size="10" fill="#888" x="348" y="728">complete analyst report</text>
+
+<!-- OUTPUT LAYER -->
+<text font-size="12" fill="#555" x="40" y="748" dominant-baseline="central">Output Layer — three-tab Streamlit display</text>
+<g class="node" onclick="showInfo('output')">
+<rect x="40" y="760" width="183" height="76" rx="6" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+<text font-size="12" font-weight="500" fill="#712B13" x="131" y="782" text-anchor="middle" dominant-baseline="central">Tab 1</text>
+<text font-size="11" fill="#993C1D" x="131" y="800" text-anchor="middle" dominant-baseline="central">Analyst Report</text>
+<text font-size="11" fill="#993C1D" x="131" y="815" text-anchor="middle" dominant-baseline="central">All 6 sections · copyable</text>
+</g>
+
+<g class="node" onclick="showInfo('output')">
+<rect x="233" y="760" width="183" height="76" rx="6" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+<text font-size="12" font-weight="500" fill="#712B13" x="324" y="782" text-anchor="middle" dominant-baseline="central">Tab 2</text>
+<text font-size="11" fill="#993C1D" x="324" y="800" text-anchor="middle" dominant-baseline="central">Techniques</text>
+<text font-size="11" fill="#993C1D" x="324" y="815" text-anchor="middle" dominant-baseline="central">Ranked · D3FEND mapped</text>
+</g>
+
+<g class="node" onclick="showInfo('output')">
+<rect x="426" y="760" width="214" height="76" rx="6" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+<text font-size="12" font-weight="500" fill="#712B13" x="533" y="782" text-anchor="middle" dominant-baseline="central">Tab 3</text>
+<text font-size="11" fill="#993C1D" x="533" y="800" text-anchor="middle" dominant-baseline="central">Normalized JSON</text>
+<text font-size="11" fill="#993C1D" x="533" y="815" text-anchor="middle" dominant-baseline="central">Extraction transparency</text>
+</g>
+
+<!-- Green bar -->
+<rect x="40" y="852" width="600" height="34" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text font-size="13" font-weight="500" fill="#085041" x="340" y="870" text-anchor="middle" dominant-baseline="central">Done — N techniques identified · end-to-end under 30 seconds</text>
+
+<!-- Tech stack -->
+<rect x="40" y="902" width="600" height="64" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text font-size="13" font-weight="500" fill="#0C447C" x="340" y="920" text-anchor="middle" dominant-baseline="central">Tech Stack</text>
+<text font-size="11" fill="#185FA5" x="340" y="938" text-anchor="middle" dominant-baseline="central">Python · FastAPI · Streamlit · ChromaDB · Gemini embeddings · Claude Sonnet</text>
+<text font-size="11" fill="#185FA5" x="340" y="953" text-anchor="middle" dominant-baseline="central">Hybrid dense + BM25 + RRF · Pydantic · MITRE ATT&amp;CK STIX JSON · D3FEND live API</text>
+
+<!-- Pipeline summary -->
+<rect x="40" y="982" width="600" height="54" rx="6" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text font-size="12" font-weight="500" fill="#2C2C2A" x="340" y="1000" text-anchor="middle" dominant-baseline="central">Build: ATT&amp;CK STIX → Gemini embed → ChromaDB · D3FEND API → JSON lookup (one-time)</text>
+<text font-size="12" fill="#5F5E5A" x="340" y="1018" text-anchor="middle" dominant-baseline="central">Query: Input → Normalize → Hybrid RAG + D3FEND → Synthesize → Three-tab report</text>
+
+<!-- Footer -->
+<text font-size="11" fill="#888" x="340" y="1058" text-anchor="middle">45 minutes of manual MITRE ATT&amp;CK + D3FEND cross-referencing → under 30 seconds</text>
+<text font-size="11" fill="#888" x="340" y="1074" text-anchor="middle">Component 2 of AI SOC Pipeline · AegisAI detection feeds ThreatOracle diagnosis</text>
+<text font-size="11" fill="#888" x="340" y="1090" text-anchor="middle">Click any layer to learn more · threatoracleai.net</text>
+
+</svg>
+</body>
+</html>
